@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# macOS
+.DS_Store
+
+# Model weights (large — keep in visualnav-transformer, not here)
+*.pth
+*.onnx
+*.mlpackage
+
+# LMDB training splits (large binary, Jetson-local)
+data/splits/
+
+# Xcode
+ios/xcuserdata/
+ios/**/*.xcuserstate
+ios/**/xcuserdata/
+
+# Secrets
+key.txt

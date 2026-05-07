@@ -1,0 +1,16 @@
+# iPhone 13 mini — main wide rear camera (for ViNT)
+#
+# Use the MAIN WIDE camera for ViNT:
+#   - ~76° diagonal / ~67° horizontal FOV — closer to ViNT training distribution
+#   - No barrel distortion (unlike ultra-wide)
+#   - Capture landscape 1280×720, center-crop to 960×720 (4:3), resize to 85×64
+#   - This is the lower lens on the rear camera array: 152 mm above ground
+#
+# For NoMaD (future): switch to the ultra-wide (108° horizontal, 160 mm height,
+#   center-crop to square 720×720, resize to 96×96).
+#
+# pitch_deg: 0 = perpendicular to ground (level). Positive = tilting downward.
+
+fov_h_deg: 67.0
+camera_h: 0.152      # 152 mm — main wide lens height (measured)
+pitch_deg: 0.0
