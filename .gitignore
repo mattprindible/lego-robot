@@ -12,8 +12,8 @@ __pycache__/
 *.onnx
 *.mlpackage
 
-# LMDB training splits (large binary, Jetson-local)
-data/splits/
+# Collected data — keep locally, not in git
+data/
 
 # Xcode
 ios/xcuserdata/
