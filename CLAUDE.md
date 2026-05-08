@@ -17,7 +17,6 @@ hub/        Pybricks MicroPython — motor control, obstacle safety, telemetry
 server/     Python inference server and utilities (runs on Jetson)
   nomad_server.py   Main inference server (explore + navigate modes)
   sensor_hub.py     WebSocket bridge — SensorHub class
-  recorder.py       Training data collection with browser UI
   infer_nomad.py    Standalone inference smoke test
 config/     robot.yaml
 data/       Collected trajectories (traj_NNNN/) — gitignored, local only
@@ -37,23 +36,6 @@ python nomad_server.py --mode navigate --goal /path/to/goal.jpg
 ```
 
 Then open the iPhone app and connect to `ws://192.168.0.77:8765`.
-
-## Collecting training data
-
-```bash
-cd ~/lego-robot/server
-python recorder.py
-# then open http://192.168.0.77:8080 in a browser
-```
-
-Saves to `data/traj_NNNN/` — JPEG frames + `traj_data.pkl` with ARKit position and yaw.
-
-## Deploy hub code
-
-```bash
-cd hub
-python deploy.py    # disconnects hub → uploads main.py → reconnects → Ready
-```
 
 ---
 
