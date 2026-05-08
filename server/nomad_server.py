@@ -165,26 +165,6 @@ def _wp_to_drive(wp_x: float, wp_y: float, chosen_wp: int,
     return f"drive:{speed_mm}:{turn_degps}"
 
 
-# ── hub telemetry monitor ────────────────────────────────────────────────────
-async def _watch_hub_lines(hub: SensorHub):
-    while True:
-        line = await hub.next_hub_line()
-        print(f"  [hub] {line}")
-
-
-async def _watch_hub_state(hub: SensorHub):
-    last = None
-    while True:
-        if hub.hub_state != last:
-            last = hub.hub_state
-            print(f"  [hub] state → {last}")
-        await asyncio.sleep(0.1)
-
-
-async def hub_monitor(hub: SensorHub):
-    await asyncio.gather(_watch_hub_lines(hub), _watch_hub_state(hub))
-
-
 # ── main inference loop ───────────────────────────────────────────────────────
 async def inference_loop(hub: SensorHub, model: NoMaD, config: dict,
                          goal_tensor: torch.Tensor, goal_mask: torch.Tensor,
@@ -269,23 +249,21 @@ async def run(args):
     print(f"\nWebSocket server on port {args.port}")
     print(f"Connect iPhone app to:  ws://{ip}:{args.port}\n")
 
-    server_task  = asyncio.create_task(hub.serve_forever(), name="ws-server")
-    infer_task   = asyncio.create_task(
+    server_task = asyncio.create_task(hub.serve_forever(), name="ws-server")
+    infer_task  = asyncio.create_task(
         inference_loop(hub, model, config, goal_tensor, goal_mask,
                        device, args.waypoint, executor, args.mode,
                        max_v, max_w, frame_rate),
         name="inference"
     )
-    monitor_task = asyncio.create_task(hub_monitor(hub), name="hub-monitor")
 
     try:
-        await asyncio.gather(server_task, infer_task, monitor_task)
+        await asyncio.gather(server_task, infer_task)
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
         server_task.cancel()
         infer_task.cancel()
-        monitor_task.cancel()
         executor.shutdown(wait=False)
         if hub.connected:
             try:
