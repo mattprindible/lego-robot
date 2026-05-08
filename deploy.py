@@ -25,11 +25,12 @@ ROOT = Path(__file__).parent
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-JETSON_SSH     = "matt@jetson.local"
-JETSON_PATH    = "~/lego-robot"
-JETSON_VENV_PY = "~/venvs/nomad/bin/python"
-JETSON_WS_HOST = "jetson.local"
-JETSON_WS_PORT = 8765
+JETSON_SSH      = "matt@jetson.local"
+JETSON_PATH     = "~/lego-robot"
+JETSON_VENV_PY  = "~/venvs/nomad/bin/python"
+JETSON_CUDA_LIBS = "~/venvs/nomad/lib/python3.10/site-packages/nvidia/cu13/lib"
+JETSON_WS_HOST  = "jetson.local"
+JETSON_WS_PORT  = 8765
 
 HUB_BLE_NAME   = "Matt's Hub"
 
@@ -103,7 +104,7 @@ def preflight():
     ok(f"Jetson SSH ({JETSON_SSH})")
 
     r = ssh(
-        f"{JETSON_VENV_PY} -c \"import torch; print('torch', torch.__version__)\"",
+        f"LD_LIBRARY_PATH={JETSON_CUDA_LIBS} {JETSON_VENV_PY} -c \"import torch; print('torch', torch.__version__)\"",
         capture=True, check=False,
     )
     if r.returncode != 0:
@@ -135,7 +136,7 @@ def deploy_server():
 
     for script in ["nomad_server.py", "sensor_hub.py", "infer_nomad.py"]:
         r = ssh(
-            f"{JETSON_VENV_PY} -m py_compile {JETSON_PATH}/server/{script}",
+            f"LD_LIBRARY_PATH={JETSON_CUDA_LIBS} {JETSON_VENV_PY} -m py_compile {JETSON_PATH}/server/{script}",
             capture=True, check=False,
         )
         if r.returncode != 0:
@@ -248,14 +249,16 @@ def smoke_test():
     section("Smoke test — full end-to-end")
 
     # Clear previous log and any leftover server
-    ssh(f"rm -f {SMOKE_LOG}; pkill -f nomad_server.py; sleep 1",
+    ssh(f"rm -f {SMOKE_LOG}; pkill -f nomad_server.py; "
+        f"fuser -k {JETSON_WS_PORT}/tcp 2>/dev/null; sleep 1",
         capture=True, check=False)
 
     # Start server, capture PID
     r = ssh(
         f"bash -c 'source ~/venvs/nomad/bin/activate && "
+        f"export LD_LIBRARY_PATH={JETSON_CUDA_LIBS}:$LD_LIBRARY_PATH && "
         f"cd {JETSON_PATH}/server && "
-        f"nohup python nomad_server.py --mode explore "
+        f"nohup python -u nomad_server.py --mode explore "
         f"> {SMOKE_LOG} 2>&1 & echo $!'",
         capture=True,
     )
