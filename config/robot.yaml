@@ -3,19 +3,10 @@ max_v: 0.2 #0.4 # m/s
 max_w: 0.4 #0.8 # rad/s
 # observation rate fo the robot
 frame_rate: 4 # Hz
-graph_rate: 0.3333 # Hz  
-
-# Differential drive wheel geometry (used to convert v/w → left/right wheel speeds)
-# Measure on the actual robot build and update these.
+# Differential drive wheel geometry
 # wheel_radius: outer radius of the drive wheels in metres
 # axle_track:   centre-to-centre distance between the two drive wheels in metres
-# Pybricks uses mm and degrees internally; the inference server will do the conversion.
 wheel_radius: 0.028   # 28 mm (measured)
 axle_track:   0.134   # 134 mm centre-to-centre (measured)
-
-# topic names (modify for different robots/nodes)
-vel_teleop_topic: /cmd_vel_mux/input/teleop
-vel_navi_topic: /cmd_vel_mux/input/navi
-vel_recovery_topic: /cmd_vel_mux/input/recovery
 
 

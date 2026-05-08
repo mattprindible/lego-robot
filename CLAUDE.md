@@ -15,9 +15,15 @@ Set `VISUALNAV` env var to override the default location.
 ios/        iPhone app (Xcode) — ARKit camera, WebSocket client, BLE hub bridge
 hub/        Pybricks MicroPython — motor control, obstacle safety, telemetry
 server/     Python inference server and utilities (runs on Jetson)
-config/     robot.yaml, camera_iphone.yaml
-data/       Collected trajectories (traj_NNNN/)
+  nomad_server.py   Main inference server (explore + navigate modes)
+  sensor_hub.py     WebSocket bridge — SensorHub class
+  recorder.py       Training data collection with browser UI
+  infer_nomad.py    Standalone inference smoke test
+config/     robot.yaml
+data/       Collected trajectories (traj_NNNN/) — gitignored, local only
 ```
+
+---
 
 ## Launch sequence
 
@@ -32,6 +38,16 @@ python nomad_server.py --mode navigate --goal /path/to/goal.jpg
 
 Then open the iPhone app and connect to `ws://192.168.0.77:8765`.
 
+## Collecting training data
+
+```bash
+cd ~/lego-robot/server
+python recorder.py
+# then open http://192.168.0.77:8080 in a browser
+```
+
+Saves to `data/traj_NNNN/` — JPEG frames + `traj_data.pkl` with ARKit position and yaw.
+
 ## Deploy hub code
 
 ```bash
@@ -43,14 +59,12 @@ python deploy.py    # disconnects hub → uploads main.py → reconnects → Rea
 
 ## Architecture
 
-```
-Layer 3 — Semantics (Claude)
-  "What is a good target?" / "Have I been here before?" / "What's interesting?"
-  Runs once per goal. Returns something small Python can act on.
+Two layers are running:
 
+```
 Layer 2 — Geometry (Python / Jetson)
   NoMaD inference → waypoint → drive:speed:turn_rate
-  Runs the servo loop. Handles coordinates, distances, headings.
+  Runs the control loop. Handles coordinates, distances, headings.
   Never makes semantic judgments.
 
 Layer 1 — Motor control (Hub / Pybricks MicroPython)
@@ -59,12 +73,26 @@ Layer 1 — Motor control (Hub / Pybricks MicroPython)
   Never makes navigation decisions.
 ```
 
-**Claude does semantics. Python does geometry. The hub does physics.**
-
-The interface between layers is deliberately thin:
-- Claude → Python: `{status, image_x}` (where is the target?)
+Interfaces:
 - Python → Hub: `drive:200:0` / `turn:90` / `stop`
 - Hub → Python: `event|safety_stop|148` / `telem|ds:...|obs:...|hdg:...`
+
+A semantic layer (Claude picks exploration targets, decides when goal is reached) is the intended next step — not yet wired in.
+
+---
+
+## visualnav-transformer setup (Jetson)
+
+Clone from https://github.com/robodhruv/visualnav-transformer to `~/visualnav-transformer`. After a fresh clone:
+
+```bash
+# 1. Model weights directory (nomad.pth is not in the repo)
+mkdir -p ~/visualnav-transformer/deployment/model_weights
+# copy nomad.pth here
+
+# 2. Remove a dead import — torchvision isn't installed in the nomad venv
+sed -i '/^import torchvision$/d' ~/visualnav-transformer/train/vint_train/models/nomad/nomad_vint.py
+```
 
 ---
 
@@ -131,26 +159,11 @@ Use `hdg` for heading ground truth. `ang` overcounts due to wheel slip.
 
 ---
 
-## Python motor helpers (hub_utils.py)
-
-```python
-from hub_utils import straight, turn, pos, dist, latest_telem, wait_for_connection
-
-turn(hub, 90)              # blocking, waits for event|done
-straight(hub, 500)         # continuous drive + VIO distance check, blocking
-p = pos(hub)               # VIO position (x, y, z) in metres, or None
-t = latest_telem(hub)      # dict of latest telem fields
-```
-
-`straight()` uses VIO (ARKit) for distance measurement, not wheel odometry.
-
----
-
 ## Camera
 
 - **Current:** ARKit `ARWorldTrackingConfiguration` → main wide camera (67° FOV, 152mm height)
 - **Ideal for NoMaD:** ultra-wide (108° FOV, 160mm height) — requires switching iOS to `AVCaptureSession`
-- Server center-crops any resolution to square → 96×96 for NoMaD, so any input works
+- Server center-crops any resolution to square → 96×96 for NoMaD, so the mismatch is tolerated for now
 
 ---
 

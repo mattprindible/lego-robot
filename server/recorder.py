@@ -7,7 +7,7 @@ NoMaD recorder + web controller.
 Open http://localhost:8080 in your browser after starting this script.
 
 Saved trajectories go to:
-  collected_data/traj_NNNN/
+  data/traj_NNNN/
     0.jpg, 1.jpg, …
     traj_data.pkl  →  {"position": [[x,y],…], "yaw": [rad,…]}
 
@@ -35,7 +35,7 @@ from PIL import Image
 
 WS_PORT   = 8765
 HTTP_PORT = 8080
-OUTPUT_DIR = Path("collected_data")
+OUTPUT_DIR = Path(__file__).parent.parent / "data"
 MIN_FRAMES = 8
 
 # ── HTML UI ───────────────────────────────────────────────────────────────────
