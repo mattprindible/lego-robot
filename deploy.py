@@ -199,6 +199,16 @@ def deploy_ios():
         err("iOS install failed — is the iPhone unlocked and trusted?")
     ok(f"App installed ({IOS_DEVICE_ID[:8]}…)")
 
+    r = run(
+        ["xcrun", "devicectl", "device", "process", "launch",
+         "--device", IOS_DEVICE_ID, "com.mattprindible.test"],
+        capture=True, check=False,
+    )
+    if r.returncode != 0:
+        warn("App launch failed — open it manually on the iPhone")
+    else:
+        ok("App launched")
+
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
 
@@ -273,7 +283,7 @@ def smoke_test():
         ok(f"WebSocket port {JETSON_WS_PORT} open")
 
         # Prompt
-        print(f"\n  {Y}▶  Open the iPhone app — it will auto-connect to the server.{X}")
+        print(f"\n  {Y}▶  App is launching on iPhone — it will auto-connect to the server.{X}")
         print(f"  {Y}▶  Tap 'Connect Hub' in the app once it connects.{X}\n")
 
         # iPhone connect
