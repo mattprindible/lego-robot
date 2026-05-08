@@ -171,7 +171,7 @@ def deploy_ios():
 
     def xcode_filter(line):
         lc = line.lower()
-        return any(x in lc for x in ["error:", "** build", "compile", "linking"])
+        return any(x in lc for x in ["error:", "** build"])
 
     rc = run_streaming(
         ["xcodebuild",

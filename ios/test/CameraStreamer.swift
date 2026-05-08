@@ -23,6 +23,15 @@ final class CameraHelper: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
     func setup() {
         setupCamera()
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.captureQueue.async {
+                guard let self, !self.session.isRunning else { return }
+                self.session.startRunning()
+            }
+        }
     }
 
     private func setupCamera() {
