@@ -6,7 +6,6 @@ The iPhone app connects here and streams JPEG camera frames.
 The server sends drive commands back to the robot via the iPhone's BLE bridge.
 """
 import asyncio
-import base64
 import json
 import socket
 
@@ -49,22 +48,11 @@ class SensorHub:
                 if isinstance(message, bytes):
                     self.latest_frame = message
                     self._frame_event.set()
-                elif isinstance(message, str):
-                    self._dispatch_json(message)
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
             self._client = None
             print("  iPhone disconnected")
-
-    def _dispatch_json(self, raw: str):
-        try:
-            msg = json.loads(raw)
-        except json.JSONDecodeError:
-            return
-        if msg.get("type") == "frame":
-            self.latest_frame = base64.b64decode(msg["jpeg"])
-            self._frame_event.set()
 
     async def serve_forever(self):
         async with websockets.serve(self._handle, "0.0.0.0", self.port):

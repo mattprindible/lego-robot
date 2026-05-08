@@ -1,38 +1,46 @@
 import Foundation
-import ARKit
+import AVFoundation
 import UIKit
 import Observation
 
-// ARHelper owns the ARSession, WebSocket, and HubManager.
-// @unchecked Sendable because we control all writes:
-// ARKit calls the delegate serially, wsTask is only replaced from connect().
-final class ARHelper: NSObject, ARSessionDelegate, @unchecked Sendable {
+// CameraHelper owns the AVCaptureSession, WebSocket, and HubManager.
+// @unchecked Sendable: capture callbacks run on captureQueue (serial),
+// wsTask is only replaced from connect().
+final class CameraHelper: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
 
     var onFrameSent: (() -> Void)?
     let hub = HubManager()
 
-    private let arSession = ARSession()
+    private let session = AVCaptureSession()
+    private let captureQueue = DispatchQueue(label: "camera.capture", qos: .userInteractive)
     private var wsTask: URLSessionWebSocketTask?
     private let urlSession = URLSession(configuration: .default)
 
     private var lastSentTime: Double = 0
-    private let frameInterval: Double = 1.0 / 5.0   // 5 fps
+    private let frameInterval: Double = 1.0 / 5.0  // 5 fps
+    private var isSendingFrame = false
     private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     func setup() {
-        arSession.delegate = self
-        let config = ARWorldTrackingConfiguration()
-        arSession.run(config)
+        setupCamera()
+    }
 
-        // Forward hub output lines to Python over WebSocket
-        hub.onLine = { [weak self] line in
-            self?.sendJSON(["type": "hub_line", "line": line])
-        }
+    private func setupCamera() {
+        let device = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back)
+                  ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)!
+        guard let input = try? AVCaptureDeviceInput(device: device) else { return }
 
-        // Forward hub connection state changes to Python
-        hub.onStateChange = { [weak self] state in
-            self?.sendJSON(["type": "hub_state", "state": state.rawValue])
-        }
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: captureQueue)
+
+        session.beginConfiguration()
+        session.sessionPreset = .medium
+        if session.canAddInput(input)  { session.addInput(input) }
+        if session.canAddOutput(output) { session.addOutput(output) }
+        session.commitConfiguration()
+
+        captureQueue.async { self.session.startRunning() }
     }
 
     func connect(to urlString: String) {
@@ -49,18 +57,26 @@ final class ARHelper: NSObject, ARSessionDelegate, @unchecked Sendable {
         wsTask.sendPing { error in completion(error == nil) }
     }
 
-    // MARK: - Outgoing helpers
+    // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
-    private func sendJSON(_ msg: [String: Any], completion: (() -> Void)? = nil) {
-        guard let data = try? JSONSerialization.data(withJSONObject: msg),
-              let text = String(data: data, encoding: .utf8) else {
-            completion?()
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        let now = sampleBuffer.presentationTimeStamp.seconds
+        guard now - lastSentTime >= frameInterval, !isSendingFrame else { return }
+        lastSentTime = now
+        isSendingFrame = true
+
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+              let jpeg = Self.encodeJPEG(pixelBuffer) else {
+            isSendingFrame = false
             return
         }
-        if let wsTask = wsTask {
-            wsTask.send(.string(text)) { _ in completion?() }
-        } else {
-            completion?()
+
+        wsTask?.send(.data(jpeg)) { [weak self] _ in
+            self?.captureQueue.async {
+                self?.isSendingFrame = false
+                self?.onFrameSent?()
+            }
         }
     }
 
@@ -73,9 +89,7 @@ final class ARHelper: NSObject, ARSessionDelegate, @unchecked Sendable {
                 if case .string(let text) = message { self.handleIncoming(text) }
                 self.startReceiving(task)
             } else {
-                if self.wsTask === task {
-                    self.wsTask = nil
-                }
+                if self.wsTask === task { self.wsTask = nil }
             }
         }
     }
@@ -94,77 +108,6 @@ final class ARHelper: NSObject, ARSessionDelegate, @unchecked Sendable {
         }
     }
 
-    // MARK: - ARSessionDelegate
-
-    private var isSendingFrame = false
-
-    func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        let now = frame.timestamp
-        guard now - lastSentTime >= frameInterval else { return }
-        guard !isSendingFrame else { return } // Drop frame if network is backed up
-        
-        lastSentTime = now
-        isSendingFrame = true
-
-        guard let jpeg = Self.encodeJPEG(frame.capturedImage) else { 
-            isSendingFrame = false
-            return 
-        }
-
-        // Pose
-        let t = frame.camera.transform
-        let pos: [Float] = [t.columns.3.x, t.columns.3.y, t.columns.3.z]
-        let q = simd_quaternion(t)
-        let rot: [Float] = [q.vector.x, q.vector.y, q.vector.z, q.vector.w]
-
-        let tracking: String
-        switch frame.camera.trackingState {
-        case .normal:                   tracking = "normal"
-        case .limited(let r):
-            switch r {
-            case .initializing:         tracking = "initializing"
-            case .excessiveMotion:      tracking = "excessiveMotion"
-            case .insufficientFeatures: tracking = "insufficientFeatures"
-            case .relocalizing:         tracking = "relocalizing"
-            @unknown default:           tracking = "limited"
-            }
-        case .notAvailable:             tracking = "unavailable"
-        @unknown default:               tracking = "unknown"
-        }
-
-        // Camera intrinsics from ARKit (landscape/native sensor coords, before portrait rotation).
-        // simd_float3x3 is column-major: columns.0 = first column, etc.
-        // Row 0: [fx,  0, cx]  → columns.0.x, columns.1.x, columns.2.x
-        // Row 1: [ 0, fy, cy]  → columns.0.y, columns.1.y, columns.2.y
-        let intr = frame.camera.intrinsics
-        let intrinsics: [Double] = [
-            Double(intr.columns.0.x),  // fx
-            Double(intr.columns.1.y),  // fy
-            Double(intr.columns.2.x),  // cx
-            Double(intr.columns.2.y),  // cy
-        ]
-        let res = frame.camera.imageResolution
-        let imageSize: [Double] = [res.width, res.height]  // landscape W×H
-
-        let msg: [String: Any] = [
-            "type":       "frame",
-            "jpeg":       jpeg.base64EncodedString(),
-            "position":   pos.map { Double($0) },
-            "rotation":   rot.map { Double($0) },
-            "tracking":   tracking,
-            "timestamp":  now,
-            "intrinsics": intrinsics,   // [fx, fy, cx, cy] in landscape sensor coords
-            "image_size": imageSize,    // [width, height] landscape (before portrait rotation)
-        ]
-
-        sendJSON(msg) { [weak self] in
-            DispatchQueue.main.async {
-                self?.isSendingFrame = false
-                self?.onFrameSent?()
-            }
-        }
-    }
-
     private static func encodeJPEG(_ pixelBuffer: CVPixelBuffer) -> Data? {
         let ci = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
         guard let cg = ciContext.createCGImage(ci, from: ci.extent) else { return nil }
@@ -178,19 +121,18 @@ final class ARHelper: NSObject, ARSessionDelegate, @unchecked Sendable {
 final class CameraStreamer {
     var isConnected = false
     var txFPS: Int = 0
-    var trackingState: String = "unavailable"
     var serverURL: String {
         didSet { UserDefaults.standard.set(serverURL, forKey: "serverURL") }
     }
 
     var hub: HubManager { helper.hub }
 
-    private let helper = ARHelper()
+    private let helper = CameraHelper()
     private var frameCount = 0
     private var fpsWindowStart = Date()
 
     init() {
-        serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? "ws://192.168.0.27:8765"
+        serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? "ws://192.168.0.77:8765"
         start()
     }
 
