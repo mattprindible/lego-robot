@@ -37,6 +37,7 @@ HUB_BLE_NAME   = "Matt's Hub"
 IOS_PROJECT    = str(ROOT / "ios" / "test.xcodeproj")
 IOS_SCHEME     = "test"
 IOS_DEVICE_ID  = "00008110-0019482202C0401E"  # Matt's iPhone
+IOS_BUILD_DIR  = "/tmp/lego-robot-ios-build"
 
 SMOKE_LOG      = "/tmp/nomad_smoke.log"
 
@@ -148,45 +149,19 @@ def deploy_server():
 
 def deploy_hub():
     section("Deploy → LEGO Hub")
-    warn(f"Hub must be powered on and idle (not connected to iPhone app)")
+    warn("Hub must be powered on and idle (not connected to iPhone app)")
     input("     Press Enter when ready... ")
 
-    # pybricksdev uploads and runs the script; we wait for event|ready
-    # then terminate — program persists in hub flash for iOS app to start later.
-    # If BLE release is slow, fallback: replace `run ble` with `run ble --no-wait`.
-    proc = subprocess.Popen(
-        ["pybricksdev", "run", "ble", "-n", HUB_BLE_NAME, "hub/main.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=ROOT,
-    )
-
     info("Connecting and uploading…")
-    deadline = time.time() + 60
-    verified = False
-
-    try:
-        while time.time() < deadline:
-            line = proc.stdout.readline()
-            if not line:
-                if proc.poll() is not None:
-                    break
-                continue
-            line = line.strip()
-            if line:
-                info(f"  hub › {line}")
-            if line == "event|ready":
-                verified = True
-                break
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-    if not verified:
-        err("Hub did not output 'event|ready' within 60s — check hub power and BLE range")
-    ok("hub/main.py uploaded — 'event|ready' confirmed")
+    r = run(
+        ["pybricksdev", "run", "ble", "--no-start", "-n", HUB_BLE_NAME, "hub/main.py"],
+        capture=True, check=False,
+    )
+    if r.returncode != 0:
+        if r.stderr:
+            info(r.stderr.strip())
+        err("Hub upload failed — check hub power and BLE range")
+    ok("hub/main.py uploaded")
 
 
 # ── Deploy: iOS ───────────────────────────────────────────────────────────────
@@ -205,12 +180,24 @@ def deploy_ios():
          "-destination", f"id={IOS_DEVICE_ID}",
          "-configuration", "Debug",
          "-allowProvisioningUpdates",
+         f"SYMROOT={IOS_BUILD_DIR}",
          "build"],
         line_filter=xcode_filter,
     )
     if rc != 0:
-        err("iOS build/install failed — run xcodebuild manually for full output")
-    ok(f"App built and installed ({IOS_DEVICE_ID[:8]}…)")
+        err("iOS build failed — run xcodebuild manually for full output")
+
+    app_path = f"{IOS_BUILD_DIR}/Debug-iphoneos/{IOS_SCHEME}.app"
+    r = run(
+        ["xcrun", "devicectl", "device", "install", "app",
+         "--device", IOS_DEVICE_ID, app_path],
+        capture=True, check=False,
+    )
+    if r.returncode != 0:
+        if r.stderr:
+            info(r.stderr.strip())
+        err("iOS install failed — is the iPhone unlocked and trusted?")
+    ok(f"App installed ({IOS_DEVICE_ID[:8]}…)")
 
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
